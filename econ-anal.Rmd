@@ -1,0 +1,140 @@
+---
+title: "實驗經濟"
+author: "yuze"
+date: "2024-12-09"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+library(data.table)
+install.packages("pwr")
+library(pwr)
+library(fixest)
+
+
+
+data <- fread("C:/Users/蔡佑澤/OneDrive/桌面/NTU python programming/panel_data.csv")
+head(data)
+
+
+data<- data%>% mutate("ID" = row_number())
+
+
+long_data <- data %>%
+  pivot_longer(
+    cols = starts_with("session"), # Select columns that start with "session"
+    names_to = "session",          # Name of the new column for session
+    values_to = "value"            # Name of the new column for values
+  )
+
+
+
+```
+
+## R Markdown
+
+This is an R Markdown document. Markdown is a simple formatting syntax for authoring HTML, PDF, and MS Word documents. For more details on using R Markdown see <http://rmarkdown.rstudio.com>.
+
+When you click the **Knit** button a document will be generated that includes both content as well as the output of any embedded R code chunks within the document. You can embed an R code chunk like this:
+
+```{r}
+
+
+# Create a session_group to categorize sessions into "session 1-1~3-9" and "session 4-1~6-9"
+long_data <- long_data %>%
+  mutate(
+    session_group = case_when(
+      grepl("^session [1-3]_", session) ~ "session 1-1~3-9",  # sessions 1-1~3-9
+      grepl("^session [4-6]_", session) ~ "session 4-1~6-9",  # sessions 4-1~6-9
+      TRUE ~ "other" # This is a fallback, not used here but for other cases
+    )
+  )
+
+
+# Calculate the average for each group (session 1-1~3-9 and session 4-1~6-9) for each ID
+long_data <- long_data %>%
+  group_by(ID, session_group) %>%
+  mutate(
+    avg_value = 27-sum(value)  # Calculate the average for each session group
+  ) %>%
+  ungroup()  # Remove grouping
+
+
+
+```
+
+
+```{r}
+library(dplyr)
+library(stringr)
+
+# Assume long_df is your data frame
+
+# Create 'time' indicator (pre-treatment = 0, post-treatment = 1)
+long_data <- long_data %>%
+  mutate(
+    time = str_extract(session, "^session (\\d+)") %>% 
+      str_replace("session ", "") %>% 
+      as.integer() %>% 
+      {if_else(. >= 4, 1, 0)}  # if session number is 4 or greater, post-treatment (1), otherwise pre-treatment (0)
+  )
+
+# Create 'treatment' indicator (example: use a column or condition to assign treatment group)
+# Assume 'type' = 1 indicates the treatment group
+long_data <- long_data %>%
+  mutate(
+    treatment = if_else(type == 1, 1, 0)  # If type == 1, it's the treatment group (1), otherwise (0)
+  )
+
+# Difference-in-Differences Interaction Term
+long_data <- long_data %>%
+  mutate(
+    treatment_cross_time = treatment * time  # Interaction between treatment and time
+  )
+
+
+
+```
+
+```{r}
+
+long_data <- long_data%>% select(-c("cumsum_0_session_1_3","cumsum_0_session_4_6","type"))
+
+long_data <- long_data %>%
+  rename(
+         part_time = `part-time`,
+         living_expenses = `living expenses`)
+
+library(simr)
+reg <- feols(avg_value~ time+ treatment+ treatment_cross_time, data= long_data, cluster = ~ID)
+reg2 <- feols(avg_value~ time+ treatment+ treatment_cross_time+ gender+ experience+ year+part_time+living_expenses, data= long_data, cluster = ~ID)
+
+
+etable(reg, reg2)
+
+
+
+# 模型 1
+f2_model1 <- 0.0108  # reg 的效应大小
+u_model1 <- 3        # reg 的自变量数量
+power <- 0.8         # 检验能力
+alpha <- 0.05        # 显著性水平
+
+# 计算所需样本量
+n_model1 <- pwr.f2.test(u = u_model1, f2 = f2_model1, sig.level = alpha, power = power)
+print(n_model1)
+
+# 模型 2
+f2_model2 <- 0.06275  # reg2 的效应大小
+u_model2 <- 8     # reg2 的自变量数量
+
+n_model2 <- pwr.f2.test(u = u_model2, f2 = f2_model2, sig.level = alpha, power = power)
+print(n_model2)
+
+```
+
+
